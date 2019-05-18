@@ -16,6 +16,10 @@
     "LGTV",
     "RS232"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/joaodforce/homebridge-lgtv-rs232c.git"
+  },
   "description": "",
   "dependencies": {
     "serialport": "^7.1.5"
