@@ -5,15 +5,15 @@ var inherits = require('util').inherits;
 module.exports = function (homebridge) {
     Service = homebridge.hap.Service;
     Characteristic = homebridge.hap.Characteristic;
-    homebridge.registerAccessory("homebridge-sharptv-rs232", "SharpTVRS232", SharpTVRS232);
+    homebridge.registerAccessory("homebridge-lgtv-rs232c", "LGTVRS232C", LGTVRS232C);
 }
 
-function SharpTVRS232(log, config) {
+function LGTVRS232C(log, config) {
     this.log = log;
 
     this.path = config["path"];
-    this.name = config["name"] || "Sharp TV";
-    this.manufacturer = config["manufacturer"] || "Sharp";
+    this.name = config["name"] || "LG TV";
+    this.manufacturer = config["manufacturer"] || "LG";
     this.model = config["model"] || "Model not available";
     this.serial = config["serial"] || "Non-defined serial";
 
@@ -40,7 +40,7 @@ function SharpTVRS232(log, config) {
         }.bind(this));
 }
 
-SharpTVRS232.prototype = {
+LGTVRS232C.prototype = {
 
     send: function(cmd, callback) {
         this.sendCommand(cmd, callback);
@@ -94,7 +94,7 @@ SharpTVRS232.prototype = {
 
     setPowerState: function(value, callback) {
         var self = this;
-        var cmd = value?"POWR1   \r":"POWR0   \r";
+        var cmd = value?"ka 01 00\r":"ka 01 01\r";
         this.exec(cmd, function(response,error) {
                   if (error) {
                   this.log('Serial power function failed: %s');
@@ -109,11 +109,11 @@ SharpTVRS232.prototype = {
 
     getPowerState: function (callback) {
         var self = this;
-        cmd = "POWR????\r";
+        cmd = "OK01\r";
         this.exec(cmd, function(response,error) {
                   
                   this.log("Power state is: " + response);
-                  if (response && response.includes("1")) {
+                  if (response && response.includes("OK01")) {
                   if(callback) callback(null, true);
                   }
                   else {
@@ -154,7 +154,8 @@ SharpTVRS232.prototype = {
 
     setInputState: function(value, callback) {
         var self = this;
-        var cmd = "IAVD"+value+"   \r";
+        // var cmd = "IAVD"+value+"   \r";
+        var cmd = "kb 01 0"+value+"\r";
         this.exec(cmd, function(response,error) {
                   if (error) {
                   this.log('Serial input mode function failed: %s');
@@ -169,24 +170,36 @@ SharpTVRS232.prototype = {
 
     getInputState: function (callback) {
         var self = this;
-        cmd = "IAVD????\r";
+        cmd = "kb 01 FF\r";
         this.exec(cmd, function(response, error) {
                   
                   this.log("Input state is:", response);
-                  if (response && response.includes("1")) {
+                  if (response && response.includes("OK02x")) {
                   callback(null, 1);
                   }
-                  else if (response && response.includes("2")) {
+                  else if (response && response.includes("OK03x")) {
                   callback(null, 2);
                   }
-                  else if (response && response.includes("3")) {
+                  else if (response && response.includes("OK04x")) {
                   callback(null, 3);
                   }
-                  else if (response && response.includes("4")) {
+                  else if (response && response.includes("OK05x")) {
                   callback(null, 4);
                   }
-                  else if (response && response.includes("5")) {
+                  else if (response && response.includes("OK06x")) {
                   callback(null, 5);
+                  }
+                  else if (response && response.includes("OK07x")) {
+                  callback(null, 6);
+                  }
+                  else if (response && response.includes("OK08x")) {
+                  callback(null, 7);
+                  }
+                  else if (response && response.includes("OK09x")) {
+                  callback(null, 8);
+                  }
+                  else if (response && response.includes("OK0ax")) {
+                  callback(null, 9);
                   }
                   else {
                   callback(null, 0);
