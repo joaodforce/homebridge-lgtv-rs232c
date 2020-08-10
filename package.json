@@ -22,7 +22,5 @@
   },
   "description": "",
   "dependencies": {
-    "rxjs": "^6.6.0",
-    "serialport": "^7.1.5"
   }
 }
