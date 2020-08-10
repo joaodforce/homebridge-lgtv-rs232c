@@ -1,4 +1,7 @@
-homebridge-sharptv-rs232
+homebridge-lgtv-rs232
+
+This Repo is under development, be careful if you want to try it.
+
 =
 Introduction
 -

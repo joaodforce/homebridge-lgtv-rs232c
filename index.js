@@ -1,8 +1,9 @@
 var Service, Characteristic;
-var SerialPort = require("serialport");
-const ByteLength = require('@serialport/parser-byte-length')
+// var SerialPort = require("serialport");
+// const ByteLength = require('@serialport/parser-byte-length')
 var inherits = require('util').inherits;
-
+const net = require('net');
+const EventEmitter = require('events');
 module.exports = function (homebridge) {
     Service = homebridge.hap.Service;
     Characteristic = homebridge.hap.Characteristic;
@@ -23,16 +24,75 @@ function LGTVRS232C(log, config) {
     this.callbackQueue = [];
     this.ready = true;
 
-    this.serialPort = new SerialPort(this.path, {
-        baudRate: 9600,
-        autoOpen: false
-    }); // this is the openImmediately flag [default is true]
+    this.tcpPort = 1001;
 
-    const parser = this.serialPort.pipe(new ByteLength({
-        length: 10
-    }))
+    const myEmitter = new EventEmitter();
 
-    parser.on('data', function (data) {
+    this.buffer = Buffer.alloc(10);
+    this.position = 0;
+
+    this.createCon = function(callback) {
+        var client = net.createConnection(this.tcpPort, this.path, function() {
+            console.log('Connected to LG TCP Server');
+    
+            this.client = client;
+    
+            // client.write(Buffer.from('login||20||\n', 'ascii'));
+            // client.write(Buffer.from('solicitaControladoras||0||\n', 'ascii'));
+        
+            client.on('data', function(chunk) {
+                console.log('Received: ' + chunk);
+                
+                let cursor = 0
+                while (cursor < chunk.length) {
+                    this.buffer[this.position++] = chunk[cursor];
+                    cursor++
+                    if (this.position === 10) {
+                        myEmitter.emit("data", this.buffer);
+                        this.buffer = Buffer.alloc(10);
+                        this.position = 0;
+                    }
+
+                }
+            }.bind(this));
+
+
+            client.on('error', function(err) {
+                console.log('TCP Connection Error: ', err);
+                if (callback) {
+                    callback(err);
+                }
+            }.bind(this));
+
+            client.on('close', function() {
+                this.client = null;
+
+                console.log('Connection closed');
+
+                setTimeout(() => {
+                    console.log('Reconnecting...');
+                    this.createCon();
+                }, 5000);
+            }.bind(this));
+
+            if (callback) {
+                callback();
+            }
+        
+        }.bind(this));
+
+    }.bind(this);
+    
+    // this.serialPort = new SerialPort(this.path, {
+    //     baudRate: 9600,
+    //     autoOpen: false
+    // }); // this is the openImmediately flag [default is true]
+
+    // const parser = this.serialPort.pipe(new ByteLength({
+    //     length: 10
+    // }))
+
+    myEmitter.on('data', function (data) {
 
         this.log("Received data: " + data);
 
@@ -43,7 +103,7 @@ function LGTVRS232C(log, config) {
         // this.serialPort.close(function (error) {
         //     this.log("Closing connection");
         //     if (error) this.log("Error when closing connection: " + error)
-            
+
         // }.bind(this)); // close after response
     }.bind(this));
 }
@@ -68,20 +128,22 @@ LGTVRS232C.prototype = {
     sendCommand: function (command, callback) {
         this.log("serialPort.open");
 
-        if (this.serialPort.isOpen) {
-            this.log("serialPort is already open...");
+        if (this.client && !this.client.destroyed) {
+            this.log("TCP Server is already connected...");
 
             if (callback) {
                 this.callbackQueue.push(callback);
             }
-            this.serialPort.write(command, function (err) {
-                if (err) this.log("Write error = " + err);
-            }.bind(this));
-            
+            this.client.write(command);
+
+            // this.serialPort.write(command, function (err) {
+            //     if (err) this.log("Write error = " + err);
+            // }.bind(this));
+
         } else {
-            this.serialPort.open(function (error) {
+            this.createCon(function (error) {
                 if (error) {
-                    this.log("Error when opening serialport: " + error);
+                    this.log("Error when connecting to TCP Server: " + error);
                     if (callback) {
                         callback(0, error);
                     }
@@ -89,9 +151,11 @@ LGTVRS232C.prototype = {
                     if (callback) {
                         this.callbackQueue.push(callback);
                     }
-                    this.serialPort.write(command, function (err) {
-                        if (err) this.log("Write error = " + err);
-                    }.bind(this));
+
+                    this.client.write(command);
+                    // this.serialPort.write(command, function (err) {
+                    //     if (err) this.log("Write error = " + err);
+                    // }.bind(this));
                 }
             }.bind(this));
         }
@@ -266,38 +330,96 @@ LGTVRS232C.prototype = {
 
     getServices: function () {
         var service = new Service.AccessoryInformation();
+
+
         service.setCharacteristic(Characteristic.Name, this.name)
             .setCharacteristic(Characteristic.Manufacturer, this.manufacturer)
             .setCharacteristic(Characteristic.Model, this.model);
 
-        var switchService = new Service.Switch(this.name);
-        switchService.getCharacteristic(Characteristic.On)
-            .on('set', this.setPowerState.bind(this))
-            .on('get', this.getPowerState.bind(this));
 
-        makeInputStateCharacteristic();
+        this.tvService = new Service.Television(this.name, 'tvService');
 
-        switchService.addCharacteristic(InputStateCharacteristic)
-            .on('set', this.setInputState.bind(this))
-            .on('get', this.getInputState.bind(this));
+        this.tvService
+        .getCharacteristic(Characteristic.Active)
+        .on('get', this.getPowerState.bind(this))
+        .on('set', this.setPowerState.bind(this));
 
-        // Creating Speaker for Volume control
-        this.log("Creating speaker!");
-        const speakerService = new Service.Speaker(this.name);
 
-        this.log("... adding on characteristic");
-        speakerService
-            .addCharacteristic(new Characteristic.On())
-            .on("get", this.getMuteState.bind(this))
-            .on("set", this.setMuteState.bind(this));
+        this.tvSpeakerService = new Service.TelevisionSpeaker(this.name + ' Volume', 'tvSpeakerService');
+        this.tvSpeakerService
+        .setCharacteristic(Characteristic.Active, Characteristic.Active.ACTIVE)
+        .setCharacteristic(Characteristic.VolumeControlType, Characteristic.VolumeControlType.ABSOLUTE);
+        this.tvSpeakerService
+        .getCharacteristic(Characteristic.VolumeSelector)
+        .on('set', (state, callback) => {
+            this.logDebug('Volume change over the remote control (VolumeSelector), pressed: %s', state === 1 ? 'Down' : 'Up');
+            this.setVolumeSwitch(state, callback, !state);
+        });
+        this.tvSpeakerService
+        .getCharacteristic(Characteristic.Mute)
+        .on('get', this.getMuteState.bind(this))
+        .on('set', this.setMuteState.bind(this));
+        this.tvSpeakerService
+        .addCharacteristic(Characteristic.Volume)
+        .on('get', this.getVolume.bind(this))
+        .on('set', this.setVolume.bind(this));
 
-        speakerService
-            .addCharacteristic(new Characteristic.Volume())
-            .on("get", this.getVolume.bind(this))
-            .on("set", this.setVolume.bind(this));
+        this.tvService.addLinkedService(this.tvSpeakerService);
+        // this.enabledServices.push(this.tvSpeakerService);
 
-        return [service, switchService, speakerService];
+        // var switchService = new Service.Switch(this.name);
+        // // var switchService = new Service
+        // switchService.getCharacteristic(Characteristic.On)
+        //     .on('set', this.setPowerState.bind(this))
+        //     .on('get', this.getPowerState.bind(this));
+
+        // Speaker
+
+        // let speakerService = new Service.Speaker(this.name + ' Audio');
+
+
+        // this.log("add Characteristic Mute...");
+        // speakerService.getCharacteristic(Characteristic.Mute)
+        //     .on('get', this.getMuteState.bind(this))
+        //     .on('set', this.setMuteState.bind(this));
+            
+        // this.log("add Characteristic Volume...");
+        // speakerService.getCharacteristic(Characteristic.Volume)
+        //     .on('get', this.getVolume.bind(this))
+        //     .on('set', this.setVolume.bind(this));
+
+        // this.log("add Characteristic On...");
+        // speakerService.getCharacteristic(Characteristic.On)
+        //     .on('get', this.getPowerState.bind(this))
+        //     .on('set', this.setPowerState.bind(this));
+
+        // makeInputStateCharacteristic();
+
+        // switchService.addCharacteristic(InputStateCharacteristic)
+        //     .on('set', this.setInputState.bind(this))
+        //     .on('get', this.getInputState.bind(this));
+
+        // // Creating Speaker for Volume control
+        // this.log("Creating speaker!");
+        // const speakerService = new Service.Speaker(this.name);
+
+        // this.log("... adding on characteristic");
+        // speakerService
+        //     .addCharacteristic(new Characteristic.On())
+        //     .on("get", this.getMuteState.bind(this))
+        //     .on("set", this.setMuteState.bind(this));
+
+        // speakerService
+        //     .addCharacteristic(new Characteristic.Volume())
+        //     .on("get", this.getVolume.bind(this))
+        //     .on("set", this.setVolume.bind(this));
+
+        // return [service, speakerService];
+        return [service, this.tvService, this.tvSpeakerService];
     }
+
+    
+
 };
 
 function makeInputStateCharacteristic() {
